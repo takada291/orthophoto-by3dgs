@@ -231,7 +231,7 @@
     
     <div id="pane-map">
         <div class="map-crosshair"></div>
-        <div id="center-coords-panel" onclick="applyCoordsToSelectedGcp()" title="3.クリックで座標をコピー＆GCPに反映">
+        <div id="center-coords-panel" onclick="applyCoordsToSelectedGcp()" title="クリックで座標をコピー＆GCPに反映">
             📍 座標取得中...
         </div>
         <div id="map" style="width: 100%; height: 100%;"></div>
@@ -269,7 +269,7 @@
     function updateCenterCoordsText() {
         const center = map.getCenter();
         const panel = document.getElementById('center-coords-panel');
-        panel.innerHTML = `📍 緯度: ${center.lat.toFixed(6)}, 経度: ${center.lng.toFixed(6)}<br><span style="font-size:10px; color:#666;">(クリックで選択中のGCPに反映)</span>`;
+        panel.innerHTML = `📍 緯度: ${center.lat.toFixed(6)}, 経度: ${center.lng.toFixed(6)}<br><span style="font-size:10px; color:#666;">3.クリックで選択中のGCPに反映</span>`;
     }
     map.on('move', updateCenterCoordsText);
     updateCenterCoordsText();
