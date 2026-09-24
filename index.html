@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>簡易正射アプリ（3DGSから簡易オルソ作成）v0.1</title>
+    <title>簡易正射v0.2</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -52,14 +52,11 @@
             height: calc(100vh - 50px);
         }
 
-        /* 左側：3Dビュー */
         #pane-3d { width: 50%; height: 100%; position: relative; border-right: 2px solid #ccc; }
         #canvas-container { width: 100%; height: 100%; display: block; }
         
-        /* 右側：2D地図 */
         #pane-map { width: 50%; height: 100%; position: relative; }
 
-        /* マップ中央の十字カーソル */
         .map-crosshair {
             position: absolute;
             top: 50%;
@@ -80,7 +77,6 @@
         .map-crosshair::before { top: 9px; left: 0; width: 20px; height: 2px; }
         .map-crosshair::after { top: 0; left: 9px; width: 2px; height: 20px; }
 
-        /* 座標表示＆反映ボタン */
         #center-coords-panel {
             position: absolute;
             bottom: 20px;
@@ -105,7 +101,6 @@
             border-color: #3498db;
         }
 
-        /* GCP管理パネル */
         #gcp-panel {
             position: absolute;
             bottom: 10px;
@@ -151,7 +146,7 @@
 <body>
 
 <div id="header-controls">
-    <div class="app-title">簡易正射アプリ（3DGSから簡易オルソ作成）v0.1</div>
+    <div class="app-title">簡易正射アプリ（3DGSから簡易オルソ作成）v0.2</div>
     
     <select id="prefSelect" onchange="changePref()">
         <option value="43.064,141.347">北海道</option>
@@ -236,7 +231,6 @@
     
     <div id="pane-map">
         <div class="map-crosshair"></div>
-        <!-- タップ/クリックでGCPに反映するパネル -->
         <div id="center-coords-panel" onclick="applyCoordsToSelectedGcp()" title="クリックで座標をコピー＆GCPに反映">
             📍 座標取得中...
         </div>
@@ -255,7 +249,6 @@
     // ==========================================
     // 2D マップ (Leaflet) セットアップ
     // ==========================================
-    // オーバースケール設定: maxZoomを23まで拡張
     const map = L.map('map', { maxZoom: 23 }).setView([36.065, 136.221], 15);
     
     const photo = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg', {
@@ -273,7 +266,6 @@
         map.setView([parseFloat(val[0]), parseFloat(val[1])], 12);
     };
 
-    // マップ移動時に中心座標テキストを更新
     function updateCenterCoordsText() {
         const center = map.getCenter();
         const panel = document.getElementById('center-coords-panel');
@@ -367,7 +359,7 @@
 
         const gcp = { id: gcpCounter++, mesh: sphere, local: point, lat: "", lon: "" };
         gcps.push(gcp);
-        selectGcp(gcp.id); // 追加時に自動選択
+        selectGcp(gcp.id);
     }
 
     window.selectGcp = function(id) {
@@ -411,13 +403,11 @@
         }
     };
 
-    // ★ 十字カーソルの座標を選択中GCPへ反映する
     window.applyCoordsToSelectedGcp = function() {
         const center = map.getCenter();
         const latStr = center.lat.toFixed(6);
         const lonStr = center.lng.toFixed(6);
 
-        // クリップボードへコピー
         navigator.clipboard.writeText(`${latStr}, ${lonStr}`).catch(e => console.log("Clipboard write failed"));
 
         if (selectedGcpId !== null) {
@@ -427,10 +417,9 @@
                 gcp.lon = lonStr;
                 renderGcpTable();
                 
-                // 成功フィードバック
                 const panel = document.getElementById('center-coords-panel');
                 const origBg = panel.style.background;
-                panel.style.background = '#d4edda'; // 薄い緑色
+                panel.style.background = '#d4edda';
                 panel.innerHTML = `✅ GCP ${selectedGcpId} に反映完了`;
                 setTimeout(() => {
                     panel.style.background = origBg;
@@ -438,7 +427,7 @@
                 }, 1000);
             }
         } else {
-            alert("クリップボードにコピーしました。\n※直接反映するには、左側のGCPリストから行（ラジオボタン）を選択してください。");
+            alert("クリップボードにコピーしました。\n※直接反映するには、左側のGCPリストから行を選択してください。");
         }
     };
 
@@ -456,7 +445,7 @@
     });
 
     // ==========================================
-    // アフィン変換・エクスポート処理
+    // アフィン変換・エクスポート処理 (真北補正付き)
     // ==========================================
     function calculateAffineTransform() {
         const validGcps = gcps.filter(g => g.lat !== "" && g.lon !== "");
@@ -483,20 +472,48 @@
     function captureOrthoImage(transform) {
         if (!currentModel) return null;
         
+        // 【重要】3D空間の真北ベクトルを算出し、カメラの「上」を北に固定する
+        const det = transform.a * transform.e - transform.b * transform.d;
+        const northX = -transform.b / det;
+        const northZ = transform.a / det;
+        const northVec = new THREE.Vector3(northX, 0, northZ).normalize();
+        orthoCamera.up.copy(northVec);
+
         modelBox.setFromObject(currentModel);
         const center = modelBox.getCenter(new THREE.Vector3());
-        const size = modelBox.getSize(new THREE.Vector3());
-
+        
         orthoCamera.position.set(center.x, modelBox.max.y + 10, center.z);
         orthoCamera.lookAt(center.x, center.y, center.z);
+        orthoCamera.updateMatrixWorld();
 
-        const halfWidth = size.x / 2;
-        const halfHeight = size.z / 2;
+        // カメラが回転したため、モデルの隅を再計算してピッタリ収まる描画範囲を求める
+        const corners = [
+            new THREE.Vector3(modelBox.min.x, modelBox.min.y, modelBox.min.z),
+            new THREE.Vector3(modelBox.max.x, modelBox.min.y, modelBox.min.z),
+            new THREE.Vector3(modelBox.min.x, modelBox.max.y, modelBox.min.z),
+            new THREE.Vector3(modelBox.max.x, modelBox.max.y, modelBox.min.z),
+            new THREE.Vector3(modelBox.min.x, modelBox.min.y, modelBox.max.z),
+            new THREE.Vector3(modelBox.max.x, modelBox.min.y, modelBox.max.z),
+            new THREE.Vector3(modelBox.min.x, modelBox.max.y, modelBox.max.z),
+            new THREE.Vector3(modelBox.max.x, modelBox.max.y, modelBox.max.z)
+        ];
         
-        orthoCamera.left = -halfWidth * 1.1;
-        orthoCamera.right = halfWidth * 1.1;
-        orthoCamera.top = halfHeight * 1.1;
-        orthoCamera.bottom = -halfHeight * 1.1;
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        corners.forEach(corner => {
+            const localPt = orthoCamera.worldToLocal(corner.clone());
+            minX = Math.min(minX, localPt.x);
+            maxX = Math.max(maxX, localPt.x);
+            minY = Math.min(minY, localPt.y);
+            maxY = Math.max(maxY, localPt.y);
+        });
+        
+        const marginX = (maxX - minX) * 0.05;
+        const marginY = (maxY - minY) * 0.05;
+        
+        orthoCamera.left = minX - marginX;
+        orthoCamera.right = maxX + marginX;
+        orthoCamera.top = maxY + marginY;
+        orthoCamera.bottom = minY - marginY;
         orthoCamera.updateProjectionMatrix();
 
         gcps.forEach(g => g.mesh.visible = false);
@@ -504,14 +521,18 @@
         const dataUrl = renderer.domElement.toDataURL('image/jpeg', 0.95);
         gcps.forEach(g => g.mesh.visible = true);
 
-        const tl_lon = transform.a * (center.x + orthoCamera.left) + transform.b * (center.z - orthoCamera.top) + transform.c;
-        const tl_lat = transform.d * (center.x + orthoCamera.left) + transform.e * (center.z - orthoCamera.top) + transform.f;
-        const br_lon = transform.a * (center.x + orthoCamera.right) + transform.b * (center.z - orthoCamera.bottom) + transform.c;
-        const br_lat = transform.d * (center.x + orthoCamera.right) + transform.e * (center.z - orthoCamera.bottom) + transform.f;
+        // North-Up固定なので、左上が「北西」、右下が「南東」と確定する
+        const topLeft = new THREE.Vector3(-1, 1, 0).unproject(orthoCamera);
+        const bottomRight = new THREE.Vector3(1, -1, 0).unproject(orthoCamera);
 
-        const bounds = `${Math.min(tl_lat, br_lat).toFixed(6)},${Math.min(tl_lon, br_lon).toFixed(6)},${Math.max(tl_lat, br_lat).toFixed(6)},${Math.max(tl_lon, br_lon).toFixed(6)}`;
+        const west = transform.a * topLeft.x + transform.b * topLeft.z + transform.c;
+        const north = transform.d * topLeft.x + transform.e * topLeft.z + transform.f;
+        const east = transform.a * bottomRight.x + transform.b * bottomRight.z + transform.c;
+        const south = transform.d * bottomRight.x + transform.e * bottomRight.z + transform.f;
 
-        return { dataUrl, bounds, tl_lon, tl_lat, br_lon, br_lat };
+        const bounds = `${south.toFixed(6)},${west.toFixed(6)},${north.toFixed(6)},${east.toFixed(6)}`;
+
+        return { dataUrl, bounds, north, south, east, west };
     }
 
     document.getElementById('btn-export-exif').addEventListener('click', () => {
@@ -526,7 +547,7 @@
             const newDataUrl = piexif.insert(piexif.dump({"0th": zeroth, "Exif": exif, "GPS": gps}), capture.dataUrl);
 
             const link = document.createElement('a');
-            link.download = `3d_ortho_${capture.bounds}.jpg`;
+            link.download = `ortho_by3dgs_${capture.bounds}.jpg`;
             link.href = newDataUrl;
             link.click();
         } catch (e) { alert("Exif書き込み失敗: " + e.toString()); }
@@ -539,18 +560,18 @@
         if(!capture) return;
 
         const imgLink = document.createElement('a');
-        imgLink.download = "3d_ortho.jpg";
+        imgLink.download = "ortho_by3dgs.jpg";
         imgLink.href = capture.dataUrl;
         imgLink.click();
 
         const canvas = renderer.domElement;
-        const pixelWidthDeg = (Math.max(capture.tl_lon, capture.br_lon) - Math.min(capture.tl_lon, capture.br_lon)) / canvas.width;
-        const pixelHeightDeg = (Math.min(capture.tl_lat, capture.br_lat) - Math.max(capture.tl_lat, capture.br_lat)) / canvas.height;
+        const pixelWidthDeg = (capture.east - capture.west) / canvas.width;
+        const pixelHeightDeg = (capture.south - capture.north) / canvas.height; // Y軸は南へ向かって減少するためマイナス値
 
-        const jgwContent = `${pixelWidthDeg}\n0.0000000000\n0.0000000000\n${pixelHeightDeg}\n${Math.min(capture.tl_lon, capture.br_lon)}\n${Math.max(capture.tl_lat, capture.br_lat)}\n`;
+        const jgwContent = `${pixelWidthDeg}\n0.0000000000\n0.0000000000\n${pixelHeightDeg}\n${capture.west}\n${capture.north}\n`;
         const blob = new Blob([jgwContent], { type: 'text/plain' });
         const jgwLink = document.createElement('a');
-        jgwLink.download = "3d_ortho.jgw";
+        jgwLink.download = "ortho_by3dgs.jgw";
         jgwLink.href = URL.createObjectURL(blob);
         jgwLink.click();
     });
