@@ -198,18 +198,18 @@
         <option value="26.212,127.681">沖縄県</option>
     </select>
 
-    <button onclick="document.getElementById('file-input').click()">GLB読込</button>
+    <button onclick="document.getElementById('file-input').click()">1.GLB読込</button>
     <input type="file" id="file-input" accept=".glb" style="display: none;">
     
     <div style="margin-left: auto; display: flex; gap: 10px;">
-        <button class="export-btn" id="btn-export-exif">林小班図用エクスポート</button>
-        <button class="export-btn" id="btn-export-world">GIS用エクスポート</button>
+        <button class="export-btn" id="btn-export-exif">4.林小班図用エクスポート</button>
+        <button class="export-btn" id="btn-export-world">5.GIS用エクスポート</button>
     </div>
 </div>
 
 <div id="main-container">
     <div id="pane-3d">
-        <div class="crosshair-instruction">3DモデルをダブルクリックでGCPを追加</div>
+        <div class="crosshair-instruction">2.3DモデルをダブルクリックでGCPを追加</div>
         <div id="canvas-container"></div>
         
         <div id="gcp-panel">
@@ -231,7 +231,7 @@
     
     <div id="pane-map">
         <div class="map-crosshair"></div>
-        <div id="center-coords-panel" onclick="applyCoordsToSelectedGcp()" title="クリックで座標をコピー＆GCPに反映">
+        <div id="center-coords-panel" onclick="applyCoordsToSelectedGcp()" title="3.クリックで座標をコピー＆GCPに反映">
             📍 座標取得中...
         </div>
         <div id="map" style="width: 100%; height: 100%;"></div>
