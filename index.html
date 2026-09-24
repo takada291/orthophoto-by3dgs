@@ -55,6 +55,26 @@
         #pane-3d { width: 50%; height: 100%; position: relative; border-right: 2px solid #ccc; }
         #canvas-container { width: 100%; height: 100%; display: block; }
         
+        /* 3Dビュー用の操作パネル（新規追加） */
+        #view-controls {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 6px;
+            border-radius: 6px;
+            box-shadow: 0 0 5px rgba(0,0,0,0.3);
+            z-index: 1000;
+            display: flex;
+            gap: 6px;
+        }
+        #view-controls button {
+            background-color: #7f8c8d;
+            font-size: 11px;
+            padding: 4px 8px;
+        }
+        #view-controls button:hover { background-color: #95a5a6; }
+        
         #pane-map { width: 50%; height: 100%; position: relative; }
 
         .map-crosshair {
@@ -209,6 +229,13 @@
 
 <div id="main-container">
     <div id="pane-3d">
+        <!-- モデル操作パネル -->
+        <div id="view-controls">
+            <button onclick="resetCameraTop()">俯瞰(真上)</button>
+            <button onclick="rotateModel(-15)">↺ 左回転</button>
+            <button onclick="rotateModel(15)">右回転 ↻</button>
+        </div>
+        
         <div class="crosshair-instruction">2.3DモデルをダブルクリックでGCPを追加</div>
         <div id="canvas-container"></div>
         
@@ -298,6 +325,10 @@
     directionalLight.position.set(10, 10, 5);
     scene.add(directionalLight);
 
+    // ★重要: モデルとGCPをまとめるグループを作成
+    const modelGroup = new THREE.Group();
+    scene.add(modelGroup);
+
     let currentModel = null;
     let modelBox = new THREE.Box3();
     const loader = new GLTFLoader();
@@ -312,20 +343,51 @@
     });
 
     function setupModel(model) {
-        if (currentModel) scene.remove(currentModel);
-        currentModel = model;
-        scene.add(currentModel);
+        if (currentModel) modelGroup.remove(currentModel);
         
+        // GCPの初期化
+        gcps.forEach(g => modelGroup.remove(g.mesh));
+        gcps = [];
+        gcpCounter = 1;
+        selectedGcpId = null;
+        renderGcpTable();
+        
+        // モデルの初期化とグループ追加
+        modelGroup.rotation.set(0, 0, 0); // 回転リセット
+        currentModel = model;
+        modelGroup.add(currentModel);
+        
+        // モデルの中心をグループの原点に合わせる
         modelBox.setFromObject(currentModel);
         const center = modelBox.getCenter(new THREE.Vector3());
         currentModel.position.sub(center);
         
-        modelBox.setFromObject(currentModel);
+        // カメラリセット
+        window.resetCameraTop();
+    }
+
+    // ★UI追加機能：俯瞰カメラへのリセット
+    window.resetCameraTop = function() {
+        if (!currentModel) return;
+        modelBox.setFromObject(modelGroup);
+        const center = modelBox.getCenter(new THREE.Vector3());
         const size = modelBox.getSize(new THREE.Vector3());
         const maxDim = Math.max(size.x, size.y, size.z);
-        camera.position.set(0, maxDim, maxDim);
-        controls.target.set(0, 0, 0);
-    }
+        
+        // 真上（ややZ方向にズラしてジンバルロック回避）から見下ろす
+        camera.position.set(center.x, center.y + maxDim * 1.2, center.z + 0.01);
+        controls.target.copy(center);
+        controls.update();
+    };
+
+    // ★UI追加機能：モデルグループ全体の回転
+    window.rotateModel = function(deg) {
+        if (!currentModel) return;
+        const rad = deg * (Math.PI / 180);
+        modelGroup.rotation.y += rad;
+        // 回転後、ワールド座標ベースのアフィン変換に影響はないがUI更新のため実行
+        renderGcpTable(); 
+    };
 
     // ==========================================
     // GCP 管理ロジック
@@ -343,21 +405,26 @@
         mouse.y = -((e.clientY - rect.top) / container.clientHeight) * 2 + 1;
 
         raycaster.setFromCamera(mouse, camera);
-        const intersects = raycaster.intersectObject(currentModel, true);
+        // グループ全体に対して当たり判定を行う
+        const intersects = raycaster.intersectObject(modelGroup, true);
 
         if (intersects.length > 0) {
-            addGcpPoint(intersects[0].point);
+            // intersects[0].pointは「ワールド座標」。グループ内のローカル座標に変換して格納
+            const localPoint = modelGroup.worldToLocal(intersects[0].point.clone());
+            addGcpPoint(localPoint);
         }
     });
 
-    function addGcpPoint(point) {
+    function addGcpPoint(localPoint) {
+        modelBox.setFromObject(modelGroup);
         const geometry = new THREE.SphereGeometry(modelBox.getSize(new THREE.Vector3()).x * 0.01, 16, 16);
         const material = new THREE.MeshBasicMaterial({ color: 0xff0000 });
         const sphere = new THREE.Mesh(geometry, material);
-        sphere.position.copy(point);
-        scene.add(sphere);
+        
+        sphere.position.copy(localPoint);
+        modelGroup.add(sphere); // GCPも一緒に回転するようにグループに追加
 
-        const gcp = { id: gcpCounter++, mesh: sphere, local: point, lat: "", lon: "" };
+        const gcp = { id: gcpCounter++, mesh: sphere, lat: "", lon: "" };
         gcps.push(gcp);
         selectGcp(gcp.id);
     }
@@ -396,7 +463,7 @@
     window.removeGcp = function(id) {
         const index = gcps.findIndex(g => g.id === id);
         if(index > -1) {
-            scene.remove(gcps[index].mesh);
+            modelGroup.remove(gcps[index].mesh);
             gcps.splice(index, 1);
             if(selectedGcpId === id) selectedGcpId = null;
             renderGcpTable();
@@ -445,7 +512,7 @@
     });
 
     // ==========================================
-    // アフィン変換・エクスポート処理 (真北補正付き)
+    // アフィン変換・エクスポート処理 (真北補正付き・ワールド座標基準)
     // ==========================================
     function calculateAffineTransform() {
         const validGcps = gcps.filter(g => g.lat !== "" && g.lon !== "");
@@ -455,16 +522,22 @@
         }
 
         const [p1, p2, p3] = validGcps;
-        const det = p1.local.x * (p2.local.z - p3.local.z) - p1.local.z * (p2.local.x - p3.local.x) + (p2.local.x * p3.local.z - p3.local.x * p2.local.z);
+        
+        // ★重要: モデルが回転しているため、現在のワールド座標を取得して計算する
+        const wp1 = new THREE.Vector3(); p1.mesh.getWorldPosition(wp1);
+        const wp2 = new THREE.Vector3(); p2.mesh.getWorldPosition(wp2);
+        const wp3 = new THREE.Vector3(); p3.mesh.getWorldPosition(wp3);
+
+        const det = wp1.x * (wp2.z - wp3.z) - wp1.z * (wp2.x - wp3.x) + (wp2.x * wp3.z - wp3.x * wp2.z);
         if (Math.abs(det) < 1e-10) { alert("GCPが一直線上に並んでいるため変換できません。"); return null; }
 
-        const a = (p1.lon * (p2.local.z - p3.local.z) - p1.local.z * (p2.lon - p3.lon) + (p2.lon * p3.local.z - p3.lon * p2.local.z)) / det;
-        const b = (p1.local.x * (p2.lon - p3.lon) - p1.lon * (p2.local.x - p3.local.x) + (p2.local.x * p3.lon - p3.local.x * p2.lon)) / det;
-        const c = p1.lon - a * p1.local.x - b * p1.local.z;
+        const a = (p1.lon * (wp2.z - wp3.z) - wp1.z * (p2.lon - p3.lon) + (p2.lon * wp3.z - p3.lon * wp2.z)) / det;
+        const b = (wp1.x * (p2.lon - p3.lon) - p1.lon * (wp2.x - wp3.x) + (wp2.x * p3.lon - wp3.x * p2.lon)) / det;
+        const c = p1.lon - a * wp1.x - b * wp1.z;
 
-        const d = (p1.lat * (p2.local.z - p3.local.z) - p1.local.z * (p2.lat - p3.lat) + (p2.lat * p3.local.z - p3.lat * p2.local.z)) / det;
-        const e = (p1.local.x * (p2.lat - p3.lat) - p1.lat * (p2.local.x - p3.local.x) + (p2.local.x * p3.lat - p3.local.x * p2.lat)) / det;
-        const f = p1.lat - d * p1.local.x - e * p1.local.z;
+        const d = (p1.lat * (wp2.z - wp3.z) - wp1.z * (p2.lat - p3.lat) + (p2.lat * wp3.z - p3.lat * wp2.z)) / det;
+        const e = (wp1.x * (p2.lat - p3.lat) - p1.lat * (wp2.x - wp3.x) + (wp2.x * p3.lat - wp3.x * p2.lat)) / det;
+        const f = p1.lat - d * wp1.x - e * wp1.z;
 
         return { a, b, c, d, e, f };
     }
@@ -472,21 +545,19 @@
     function captureOrthoImage(transform) {
         if (!currentModel) return null;
         
-        // 【重要】3D空間の真北ベクトルを算出し、カメラの「上」を北に固定する
         const det = transform.a * transform.e - transform.b * transform.d;
         const northX = -transform.b / det;
         const northZ = transform.a / det;
         const northVec = new THREE.Vector3(northX, 0, northZ).normalize();
         orthoCamera.up.copy(northVec);
 
-        modelBox.setFromObject(currentModel);
+        modelBox.setFromObject(modelGroup); // モデルグループ全体のバウンディングボックスを取得
         const center = modelBox.getCenter(new THREE.Vector3());
         
         orthoCamera.position.set(center.x, modelBox.max.y + 10, center.z);
         orthoCamera.lookAt(center.x, center.y, center.z);
         orthoCamera.updateMatrixWorld();
 
-        // カメラが回転したため、モデルの隅を再計算してピッタリ収まる描画範囲を求める
         const corners = [
             new THREE.Vector3(modelBox.min.x, modelBox.min.y, modelBox.min.z),
             new THREE.Vector3(modelBox.max.x, modelBox.min.y, modelBox.min.z),
@@ -521,7 +592,6 @@
         const dataUrl = renderer.domElement.toDataURL('image/jpeg', 0.95);
         gcps.forEach(g => g.mesh.visible = true);
 
-        // North-Up固定なので、左上が「北西」、右下が「南東」と確定する
         const topLeft = new THREE.Vector3(-1, 1, 0).unproject(orthoCamera);
         const bottomRight = new THREE.Vector3(1, -1, 0).unproject(orthoCamera);
 
@@ -566,7 +636,7 @@
 
         const canvas = renderer.domElement;
         const pixelWidthDeg = (capture.east - capture.west) / canvas.width;
-        const pixelHeightDeg = (capture.south - capture.north) / canvas.height; // Y軸は南へ向かって減少するためマイナス値
+        const pixelHeightDeg = (capture.south - capture.north) / canvas.height;
 
         const jgwContent = `${pixelWidthDeg}\n0.0000000000\n0.0000000000\n${pixelHeightDeg}\n${capture.west}\n${capture.north}\n`;
         const blob = new Blob([jgwContent], { type: 'text/plain' });
