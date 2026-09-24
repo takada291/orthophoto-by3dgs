@@ -2,24 +2,26 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>3D-GIS GCP & オルソエクスポート</title>
+    <title>簡易正射アプリ（3DGSから簡易オルソ作成）v0.1</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     
-    <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     
     <style>
         body { margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; font-family: sans-serif; }
         
         #header-controls {
-            padding: 10px;
+            padding: 8px 15px;
             background: #2c3e50;
             color: white;
             display: flex;
             gap: 15px;
             align-items: center;
             z-index: 1000;
+            flex-wrap: wrap;
         }
+        
+        .app-title { font-weight: bold; font-size: 15px; margin-right: 10px; }
         
         button {
             padding: 6px 12px;
@@ -36,6 +38,13 @@
         .export-btn { background-color: #e67e22; }
         .export-btn:hover { background-color: #d35400; }
 
+        select {
+            padding: 5px;
+            font-size: 13px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+        }
+
         #main-container {
             display: flex;
             flex-grow: 1;
@@ -50,6 +59,52 @@
         /* 右側：2D地図 */
         #pane-map { width: 50%; height: 100%; position: relative; }
 
+        /* マップ中央の十字カーソル */
+        .map-crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 20px;
+            height: 20px;
+            pointer-events: none;
+            z-index: 2000;
+        }
+        .map-crosshair::before, .map-crosshair::after {
+            content: '';
+            position: absolute;
+            background: red;
+            box-shadow: 0 0 2px white;
+            z-index: 2000;
+        }
+        .map-crosshair::before { top: 9px; left: 0; width: 20px; height: 2px; }
+        .map-crosshair::after { top: 0; left: 9px; width: 2px; height: 20px; }
+
+        /* 座標表示＆反映ボタン */
+        #center-coords-panel {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(255, 255, 255, 0.95);
+            padding: 8px 15px;
+            border-radius: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            z-index: 1000;
+            font-size: 13px;
+            font-weight: bold;
+            color: #004d26;
+            cursor: pointer;
+            text-align: center;
+            border: 2px solid transparent;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+        #center-coords-panel:hover {
+            background: #e8f4f8;
+            border-color: #3498db;
+        }
+
         /* GCP管理パネル */
         #gcp-panel {
             position: absolute;
@@ -59,7 +114,7 @@
             padding: 10px;
             border-radius: 8px;
             box-shadow: 0 0 10px rgba(0,0,0,0.3);
-            max-width: 90%;
+            max-width: 95%;
             max-height: 40%;
             overflow-y: auto;
             color: #333;
@@ -67,7 +122,8 @@
         
         table { border-collapse: collapse; width: 100%; font-size: 12px; }
         th, td { border: 1px solid #ccc; padding: 4px; text-align: center; }
-        input[type="text"] { width: 90px; font-size: 11px; padding: 2px; }
+        input[type="text"] { width: 80px; font-size: 11px; padding: 2px; text-align: right; }
+        .selected-row { background-color: #e8f4f8; font-weight: bold; }
 
         .crosshair-instruction {
             position: absolute;
@@ -83,7 +139,6 @@
         }
     </style>
 
-    <!-- Three.js (ES Modules) -->
     <script type="importmap">
     {
         "imports": {
@@ -96,14 +151,64 @@
 <body>
 
 <div id="header-controls">
-    <div style="font-weight: bold;">3D-GIS アライメントツール</div>
-    <button onclick="document.getElementById('file-input').click()">GLBファイルを選択して読み込む</button>
-    <!-- ユーザーがファイルを選択するためのインプット要素（非表示） -->
+    <div class="app-title">簡易正射アプリ（3DGSから簡易オルソ作成）v0.1</div>
+    
+    <select id="prefSelect" onchange="changePref()">
+        <option value="43.064,141.347">北海道</option>
+        <option value="40.824,140.740">青森県</option>
+        <option value="39.703,141.152">岩手県</option>
+        <option value="38.268,140.871">宮城県</option>
+        <option value="39.718,140.102">秋田県</option>
+        <option value="38.255,140.339">山形県</option>
+        <option value="37.750,140.467">福島県</option>
+        <option value="36.341,140.446">茨城県</option>
+        <option value="36.565,139.883">栃木県</option>
+        <option value="36.391,139.060">群馬県</option>
+        <option value="35.857,139.648">埼玉県</option>
+        <option value="35.605,140.123">千葉県</option>
+        <option value="35.689,139.691">東京都</option>
+        <option value="35.447,139.642">神奈川県</option>
+        <option value="37.902,139.023">新潟県</option>
+        <option value="36.695,137.211">富山県</option>
+        <option value="36.594,136.625">石川県</option>
+        <option value="36.065,136.221" selected>福井県</option> 
+        <option value="35.663,138.568">山梨県</option>
+        <option value="36.651,138.181">長野県</option>
+        <option value="35.391,136.722">岐阜県</option>
+        <option value="34.976,138.383">静岡県</option>
+        <option value="35.180,136.906">愛知県</option>
+        <option value="34.730,136.508">三重県</option>
+        <option value="35.021,135.755">滋賀県</option>
+        <option value="35.011,135.768">京都府</option>
+        <option value="34.686,135.520">大阪府</option>
+        <option value="34.691,135.183">兵庫県</option>
+        <option value="34.685,135.832">奈良県</option>
+        <option value="34.226,135.167">和歌山県</option>
+        <option value="35.503,134.238">鳥取県</option>
+        <option value="35.472,133.050">島根県</option>
+        <option value="34.661,133.935">岡山県</option>
+        <option value="34.396,132.459">広島県</option>
+        <option value="34.186,131.470">山口県</option>
+        <option value="34.065,134.559">徳島県</option>
+        <option value="34.340,134.043">香川県</option>
+        <option value="33.841,132.766">愛媛県</option>
+        <option value="33.559,133.531">高知県</option>
+        <option value="33.606,130.418">福岡県</option>
+        <option value="33.249,130.298">佐賀県</option>
+        <option value="32.744,129.873">長崎県</option>
+        <option value="32.789,130.741">熊本県</option>
+        <option value="33.238,131.612">大分県</option>
+        <option value="31.911,131.423">宮崎県</option>
+        <option value="31.560,130.558">鹿児島県</option>
+        <option value="26.212,127.681">沖縄県</option>
+    </select>
+
+    <button onclick="document.getElementById('file-input').click()">GLB読込</button>
     <input type="file" id="file-input" accept=".glb" style="display: none;">
     
     <div style="margin-left: auto; display: flex; gap: 10px;">
-        <button class="export-btn" id="btn-export-exif">林小班図用エクスポート (JPG+Exif)</button>
-        <button class="export-btn" id="btn-export-world">GIS用エクスポート (JPG+JGW)</button>
+        <button class="export-btn" id="btn-export-exif">林小班図用エクスポート</button>
+        <button class="export-btn" id="btn-export-world">GIS用エクスポート</button>
     </div>
 </div>
 
@@ -117,9 +222,8 @@
             <table id="gcp-table">
                 <thead>
                     <tr>
+                        <th>選択</th>
                         <th>ID</th>
-                        <th>3D X</th>
-                        <th>3D Z</th>
                         <th>緯度 (Lat)</th>
                         <th>経度 (Lon)</th>
                         <th>操作</th>
@@ -131,11 +235,15 @@
     </div>
     
     <div id="pane-map">
+        <div class="map-crosshair"></div>
+        <!-- タップ/クリックでGCPに反映するパネル -->
+        <div id="center-coords-panel" onclick="applyCoordsToSelectedGcp()" title="クリックで座標をコピー＆GCPに反映">
+            📍 座標取得中...
+        </div>
         <div id="map" style="width: 100%; height: 100%;"></div>
     </div>
 </div>
 
-<!-- Leaflet & piexifjs -->
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/piexifjs@1.0.6/piexif.js"></script>
 
@@ -147,34 +255,32 @@
     // ==========================================
     // 2D マップ (Leaflet) セットアップ
     // ==========================================
-    const map = L.map('map').setView([36.065, 136.221], 16);
+    // オーバースケール設定: maxZoomを23まで拡張
+    const map = L.map('map', { maxZoom: 23 }).setView([36.065, 136.221], 15);
     
     const photo = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg', {
-        attribution: '地理院タイル (写真)', maxZoom: 18
+        attribution: '地理院タイル', maxNativeZoom: 18, maxZoom: 23
     });
     const std = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', {
-        attribution: '地理院タイル (標準)', maxZoom: 18
+        attribution: '地理院タイル', maxNativeZoom: 18, maxZoom: 23
     });
     
     photo.addTo(map);
     L.control.layers({"空中写真": photo, "標準地図": std}).addTo(map);
 
-    let mapClickMarker = null;
-    let selectedGcpId = null;
+    window.changePref = function() {
+        const val = document.getElementById("prefSelect").value.split(",");
+        map.setView([parseFloat(val[0]), parseFloat(val[1])], 12);
+    };
 
-    map.on('click', function(e) {
-        if (selectedGcpId !== null) {
-            const latInput = document.getElementById(`lat-${selectedGcpId}`);
-            const lonInput = document.getElementById(`lon-${selectedGcpId}`);
-            if(latInput && lonInput) {
-                latInput.value = e.latlng.lat.toFixed(6);
-                lonInput.value = e.latlng.lng.toFixed(6);
-                updateGcpData(selectedGcpId);
-            }
-            if(mapClickMarker) map.removeLayer(mapClickMarker);
-            mapClickMarker = L.marker(e.latlng).addTo(map);
-        }
-    });
+    // マップ移動時に中心座標テキストを更新
+    function updateCenterCoordsText() {
+        const center = map.getCenter();
+        const panel = document.getElementById('center-coords-panel');
+        panel.innerHTML = `📍 緯度: ${center.lat.toFixed(6)}, 経度: ${center.lng.toFixed(6)}<br><span style="font-size:10px; color:#666;">(クリックで選択中のGCPに反映)</span>`;
+    }
+    map.on('move', updateCenterCoordsText);
+    updateCenterCoordsText();
 
     // ==========================================
     // 3D ビュー (Three.js) セットアップ
@@ -185,7 +291,6 @@
 
     const camera = new THREE.PerspectiveCamera(60, container.clientWidth / container.clientHeight, 0.1, 1000);
     camera.position.set(0, 10, 10);
-
     const orthoCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 1000);
     
     const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
@@ -205,14 +310,10 @@
     let modelBox = new THREE.Box3();
     const loader = new GLTFLoader();
 
-    // ★ ユーザーのファイル選択イベントのみでモデルをロードするように変更
     document.getElementById('file-input').addEventListener('change', function(e) {
         const file = e.target.files[0];
         if (!file) return;
-        
-        // ローカルファイルをブラウザ内で利用可能なURLに変換
         const url = URL.createObjectURL(file);
-        
         loader.load(url, function(gltf) {
             setupModel(gltf.scene);
         });
@@ -235,12 +336,13 @@
     }
 
     // ==========================================
-    // GCP 配置ロジック (Raycaster)
+    // GCP 管理ロジック
     // ==========================================
     const raycaster = new THREE.Raycaster();
     const mouse = new THREE.Vector2();
     let gcps = [];
     let gcpCounter = 1;
+    let selectedGcpId = null;
 
     container.addEventListener('dblclick', function(e) {
         if (!currentModel) return;
@@ -252,8 +354,7 @@
         const intersects = raycaster.intersectObject(currentModel, true);
 
         if (intersects.length > 0) {
-            const point = intersects[0].point;
-            addGcpPoint(point);
+            addGcpPoint(intersects[0].point);
         }
     });
 
@@ -264,28 +365,21 @@
         sphere.position.copy(point);
         scene.add(sphere);
 
-        const gcp = {
-            id: gcpCounter++,
-            mesh: sphere,
-            local: point,
-            lat: "",
-            lon: ""
-        };
+        const gcp = { id: gcpCounter++, mesh: sphere, local: point, lat: "", lon: "" };
         gcps.push(gcp);
-        renderGcpTable();
+        selectGcp(gcp.id); // 追加時に自動選択
     }
 
     window.selectGcp = function(id) {
         selectedGcpId = id;
-        document.querySelectorAll('#gcp-table tbody tr').forEach(tr => tr.style.backgroundColor = '');
-        document.getElementById(`row-${id}`).style.backgroundColor = '#e8f4f8';
+        renderGcpTable();
     };
 
     window.updateGcpData = function(id) {
         const gcp = gcps.find(g => g.id === id);
         if (gcp) {
-            gcp.lat = parseFloat(document.getElementById(`lat-${id}`).value) || "";
-            gcp.lon = parseFloat(document.getElementById(`lon-${id}`).value) || "";
+            gcp.lat = document.getElementById(`lat-${id}`).value;
+            gcp.lon = document.getElementById(`lon-${id}`).value;
         }
     };
 
@@ -295,13 +389,12 @@
         gcps.forEach(gcp => {
             const tr = document.createElement('tr');
             tr.id = `row-${gcp.id}`;
-            tr.onclick = () => window.selectGcp(gcp.id);
+            tr.className = (gcp.id === selectedGcpId) ? 'selected-row' : '';
             tr.innerHTML = `
+                <td><input type="radio" name="gcpSelect" ${gcp.id === selectedGcpId ? 'checked' : ''} onclick="selectGcp(${gcp.id})"></td>
                 <td>${gcp.id}</td>
-                <td>${gcp.local.x.toFixed(2)}</td>
-                <td>${gcp.local.z.toFixed(2)}</td>
-                <td><input type="text" id="lat-${gcp.id}" value="${gcp.lat}" onchange="updateGcpData(${gcp.id})"></td>
-                <td><input type="text" id="lon-${gcp.id}" value="${gcp.lon}" onchange="updateGcpData(${gcp.id})"></td>
+                <td><input type="text" id="lat-${gcp.id}" value="${gcp.lat}" onchange="updateGcpData(${gcp.id})" onclick="selectGcp(${gcp.id})"></td>
+                <td><input type="text" id="lon-${gcp.id}" value="${gcp.lon}" onchange="updateGcpData(${gcp.id})" onclick="selectGcp(${gcp.id})"></td>
                 <td><button onclick="removeGcp(${gcp.id})" style="padding:2px 6px; background:#e74c3c;">消</button></td>
             `;
             tbody.appendChild(tr);
@@ -315,6 +408,37 @@
             gcps.splice(index, 1);
             if(selectedGcpId === id) selectedGcpId = null;
             renderGcpTable();
+        }
+    };
+
+    // ★ 十字カーソルの座標を選択中GCPへ反映する
+    window.applyCoordsToSelectedGcp = function() {
+        const center = map.getCenter();
+        const latStr = center.lat.toFixed(6);
+        const lonStr = center.lng.toFixed(6);
+
+        // クリップボードへコピー
+        navigator.clipboard.writeText(`${latStr}, ${lonStr}`).catch(e => console.log("Clipboard write failed"));
+
+        if (selectedGcpId !== null) {
+            const gcp = gcps.find(g => g.id === selectedGcpId);
+            if (gcp) {
+                gcp.lat = latStr;
+                gcp.lon = lonStr;
+                renderGcpTable();
+                
+                // 成功フィードバック
+                const panel = document.getElementById('center-coords-panel');
+                const origBg = panel.style.background;
+                panel.style.background = '#d4edda'; // 薄い緑色
+                panel.innerHTML = `✅ GCP ${selectedGcpId} に反映完了`;
+                setTimeout(() => {
+                    panel.style.background = origBg;
+                    updateCenterCoordsText();
+                }, 1000);
+            }
+        } else {
+            alert("クリップボードにコピーしました。\n※直接反映するには、左側のGCPリストから行（ラジオボタン）を選択してください。");
         }
     };
 
@@ -332,7 +456,7 @@
     });
 
     // ==========================================
-    // アフィン変換 (2D: XZ -> LonLat)
+    // アフィン変換・エクスポート処理
     // ==========================================
     function calculateAffineTransform() {
         const validGcps = gcps.filter(g => g.lat !== "" && g.lon !== "");
@@ -343,11 +467,7 @@
 
         const [p1, p2, p3] = validGcps;
         const det = p1.local.x * (p2.local.z - p3.local.z) - p1.local.z * (p2.local.x - p3.local.x) + (p2.local.x * p3.local.z - p3.local.x * p2.local.z);
-        
-        if (Math.abs(det) < 1e-10) {
-            alert("GCPが一直線上に並んでいるため変換できません。配置を分散させてください。");
-            return null;
-        }
+        if (Math.abs(det) < 1e-10) { alert("GCPが一直線上に並んでいるため変換できません。"); return null; }
 
         const a = (p1.lon * (p2.local.z - p3.local.z) - p1.local.z * (p2.lon - p3.lon) + (p2.lon * p3.local.z - p3.lon * p2.local.z)) / det;
         const b = (p1.local.x * (p2.lon - p3.lon) - p1.lon * (p2.local.x - p3.local.x) + (p2.local.x * p3.lon - p3.local.x * p2.lon)) / det;
@@ -360,15 +480,6 @@
         return { a, b, c, d, e, f };
     }
 
-    function localToGeo(transform, localX, localZ) {
-        const lon = transform.a * localX + transform.b * localZ + transform.c;
-        const lat = transform.d * localX + transform.e * localZ + transform.f;
-        return { lat, lon };
-    }
-
-    // ==========================================
-    // エクスポート処理
-    // ==========================================
     function captureOrthoImage(transform) {
         if (!currentModel) return null;
         
@@ -393,52 +504,37 @@
         const dataUrl = renderer.domElement.toDataURL('image/jpeg', 0.95);
         gcps.forEach(g => g.mesh.visible = true);
 
-        const viewMinX = center.x + orthoCamera.left;
-        const viewMaxX = center.x + orthoCamera.right;
-        const viewMinZ = center.z - orthoCamera.top;
-        const viewMaxZ = center.z - orthoCamera.bottom;
+        const tl_lon = transform.a * (center.x + orthoCamera.left) + transform.b * (center.z - orthoCamera.top) + transform.c;
+        const tl_lat = transform.d * (center.x + orthoCamera.left) + transform.e * (center.z - orthoCamera.top) + transform.f;
+        const br_lon = transform.a * (center.x + orthoCamera.right) + transform.b * (center.z - orthoCamera.bottom) + transform.c;
+        const br_lat = transform.d * (center.x + orthoCamera.right) + transform.e * (center.z - orthoCamera.bottom) + transform.f;
 
-        const tl = localToGeo(transform, viewMinX, viewMinZ);
-        const br = localToGeo(transform, viewMaxX, viewMaxZ);
+        const bounds = `${Math.min(tl_lat, br_lat).toFixed(6)},${Math.min(tl_lon, br_lon).toFixed(6)},${Math.max(tl_lat, br_lat).toFixed(6)},${Math.max(tl_lon, br_lon).toFixed(6)}`;
 
-        const south = Math.min(tl.lat, br.lat).toFixed(6);
-        const north = Math.max(tl.lat, br.lat).toFixed(6);
-        const west = Math.min(tl.lon, br.lon).toFixed(6);
-        const east = Math.max(tl.lon, br.lon).toFixed(6);
-
-        return { dataUrl, bounds: `${south},${west},${north},${east}`, tl, br, sizeX: (viewMaxX - viewMinX), sizeZ: (viewMaxZ - viewMinZ) };
+        return { dataUrl, bounds, tl_lon, tl_lat, br_lon, br_lat };
     }
 
     document.getElementById('btn-export-exif').addEventListener('click', () => {
         const transform = calculateAffineTransform();
         if (!transform) return;
-
         const capture = captureOrthoImage(transform);
         if(!capture) return;
 
         try {
-            const zeroth = {};
-            const exif = {};
-            const gps = {};
+            const zeroth = {}, exif = {}, gps = {};
             zeroth[piexif.ImageIFD.ImageDescription] = capture.bounds;
-            
-            const exifObj = {"0th": zeroth, "Exif": exif, "GPS": gps};
-            const exifBytes = piexif.dump(exifObj);
-            const newDataUrl = piexif.insert(exifBytes, capture.dataUrl);
+            const newDataUrl = piexif.insert(piexif.dump({"0th": zeroth, "Exif": exif, "GPS": gps}), capture.dataUrl);
 
             const link = document.createElement('a');
             link.download = `3d_ortho_${capture.bounds}.jpg`;
             link.href = newDataUrl;
             link.click();
-        } catch (e) {
-            alert("Exifの書き込みに失敗しました: " + e.toString());
-        }
+        } catch (e) { alert("Exif書き込み失敗: " + e.toString()); }
     });
 
     document.getElementById('btn-export-world').addEventListener('click', () => {
         const transform = calculateAffineTransform();
         if (!transform) return;
-
         const capture = captureOrthoImage(transform);
         if(!capture) return;
 
@@ -448,11 +544,10 @@
         imgLink.click();
 
         const canvas = renderer.domElement;
-        const pixelWidthDeg = (Math.max(capture.tl.lon, capture.br.lon) - Math.min(capture.tl.lon, capture.br.lon)) / canvas.width;
-        const pixelHeightDeg = (Math.min(capture.tl.lat, capture.br.lat) - Math.max(capture.tl.lat, capture.br.lat)) / canvas.height;
+        const pixelWidthDeg = (Math.max(capture.tl_lon, capture.br_lon) - Math.min(capture.tl_lon, capture.br_lon)) / canvas.width;
+        const pixelHeightDeg = (Math.min(capture.tl_lat, capture.br_lat) - Math.max(capture.tl_lat, capture.br_lat)) / canvas.height;
 
-        const jgwContent = `${pixelWidthDeg}\n0.0000000000\n0.0000000000\n${pixelHeightDeg}\n${Math.min(capture.tl.lon, capture.br.lon)}\n${Math.max(capture.tl.lat, capture.br.lat)}\n`;
-
+        const jgwContent = `${pixelWidthDeg}\n0.0000000000\n0.0000000000\n${pixelHeightDeg}\n${Math.min(capture.tl_lon, capture.br_lon)}\n${Math.max(capture.tl_lat, capture.br_lat)}\n`;
         const blob = new Blob([jgwContent], { type: 'text/plain' });
         const jgwLink = document.createElement('a');
         jgwLink.download = "3d_ortho.jgw";
