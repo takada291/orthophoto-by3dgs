@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>簡易正射v0.3</title>
+    <title>簡易正射v0.4</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -55,7 +55,6 @@
         #pane-3d { width: 50%; height: 100%; position: relative; border-right: 2px solid #ccc; }
         #canvas-container { width: 100%; height: 100%; display: block; }
         
-        /* 3Dビュー用の操作パネル */
         #view-controls {
             position: absolute;
             top: 10px;
@@ -171,7 +170,7 @@
 <body>
 
 <div id="header-controls">
-    <div class="app-title">簡易正射アプリ（3DGSから簡易オルソ作成）v0.3</div>
+    <div class="app-title">簡易正射アプリ（3DGSから簡易オルソ作成）v0.4</div>
     
     <select id="prefSelect" onchange="changePref()">
         <option value="43.064,141.347">北海道</option>
@@ -234,7 +233,6 @@
 
 <div id="main-container">
     <div id="pane-3d">
-        <!-- 拡張されたモデル操作パネル -->
         <div id="view-controls">
             <button class="btn-highlight" onclick="resetCameraTop()">俯瞰(真上から見る)</button>
             <div class="control-row">
@@ -285,7 +283,7 @@
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
     // ==========================================
-    // 2D マップ (Leaflet) セットアップ
+    // 2D マップ (Leaflet)
     // ==========================================
     const map = L.map('map', { maxZoom: 23 }).setView([36.065, 136.221], 15);
     
@@ -313,7 +311,7 @@
     updateCenterCoordsText();
 
     // ==========================================
-    // 3D ビュー (Three.js) セットアップ
+    // 3D ビュー (Three.js)
     // ==========================================
     const container = document.getElementById('canvas-container');
     const scene = new THREE.Scene();
@@ -384,19 +382,15 @@
         controls.update();
     };
 
-    // Y軸回転（東西南北の向き調整）
     window.rotateModel = function(deg) {
         if (!currentModel) return;
-        const rad = deg * (Math.PI / 180);
-        modelGroup.rotation.y += rad;
+        modelGroup.rotation.y += deg * (Math.PI / 180);
         renderGcpTable(); 
     };
 
-    // ★新規追加: X軸回転（モデルが立ち上がっている場合に寝かせる）
     window.rotateModelX = function(deg) {
         if (!currentModel) return;
-        const rad = deg * (Math.PI / 180);
-        modelGroup.rotation.x += rad;
+        modelGroup.rotation.x += deg * (Math.PI / 180);
         renderGcpTable(); 
     };
 
@@ -521,7 +515,7 @@
     });
 
     // ==========================================
-    // アフィン変換・エクスポート処理
+    // アフィン変換・エクスポート処理 (最小二乗法に対応 v0.4)
     // ==========================================
     function calculateAffineTransform() {
         const validGcps = gcps.filter(g => g.lat !== "" && g.lon !== "");
@@ -530,22 +524,56 @@
             return null;
         }
 
-        const [p1, p2, p3] = validGcps;
+        // すべての有効なGCPデータを取得
+        const points = validGcps.map(p => {
+            const wp = new THREE.Vector3();
+            p.mesh.getWorldPosition(wp);
+            return { x: wp.x, z: wp.z, lon: parseFloat(p.lon), lat: parseFloat(p.lat) };
+        });
+
+        // 最小二乗法による行列計算
+        let n = points.length;
+        let sx = 0, sz = 0, sxx = 0, szz = 0, sxz = 0;
+        let slon = 0, sxlon = 0, szlon = 0;
+        let slat = 0, sxlat = 0, szlat = 0;
+
+        for (let p of points) {
+            sx += p.x; sz += p.z;
+            sxx += p.x * p.x; szz += p.z * p.z; sxz += p.x * p.z;
+            slon += p.lon; sxlon += p.x * p.lon; szlon += p.z * p.lon;
+            slat += p.lat; sxlat += p.x * p.lat; szlat += p.z * p.lat;
+        }
+
+        let q11 = sxx, q12 = sxz, q13 = sx;
+        let q21 = sxz, q22 = szz, q23 = sz;
+        let q31 = sx,  q32 = sz,  q33 = n;
+
+        // 行列式
+        let det = q11*(q22*q33 - q23*q32) - q12*(q21*q33 - q23*q31) + q13*(q21*q32 - q22*q31);
         
-        const wp1 = new THREE.Vector3(); p1.mesh.getWorldPosition(wp1);
-        const wp2 = new THREE.Vector3(); p2.mesh.getWorldPosition(wp2);
-        const wp3 = new THREE.Vector3(); p3.mesh.getWorldPosition(wp3);
+        if (Math.abs(det) < 1e-10) { 
+            alert("GCPが一直線上に並んでいるため計算できません。より広範囲に散らばらせて配置してください。"); 
+            return null; 
+        }
 
-        const det = wp1.x * (wp2.z - wp3.z) - wp1.z * (wp2.x - wp3.x) + (wp2.x * wp3.z - wp3.x * wp2.z);
-        if (Math.abs(det) < 1e-10) { alert("GCPが一直線上に並んでいるため変換できません。"); return null; }
+        // 逆行列の算出
+        let inv11 = (q22*q33 - q23*q32) / det;
+        let inv12 = (q13*q32 - q12*q33) / det;
+        let inv13 = (q12*q23 - q13*q22) / det;
+        let inv21 = (q23*q31 - q21*q33) / det;
+        let inv22 = (q11*q33 - q13*q31) / det;
+        let inv23 = (q13*q21 - q11*q23) / det;
+        let inv31 = (q21*q32 - q22*q31) / det;
+        let inv32 = (q12*q31 - q11*q32) / det;
+        let inv33 = (q11*q22 - q12*q21) / det;
 
-        const a = (p1.lon * (wp2.z - wp3.z) - wp1.z * (p2.lon - p3.lon) + (p2.lon * wp3.z - p3.lon * wp2.z)) / det;
-        const b = (wp1.x * (p2.lon - p3.lon) - p1.lon * (wp2.x - wp3.x) + (wp2.x * p3.lon - wp3.x * p2.lon)) / det;
-        const c = p1.lon - a * wp1.x - b * wp1.z;
-
-        const d = (p1.lat * (wp2.z - wp3.z) - wp1.z * (p2.lat - p3.lat) + (p2.lat * wp3.z - p3.lat * wp2.z)) / det;
-        const e = (wp1.x * (p2.lat - p3.lat) - p1.lat * (wp2.x - wp3.x) + (wp2.x * p3.lat - wp3.x * p2.lat)) / det;
-        const f = p1.lat - d * wp1.x - e * wp1.z;
+        // 変換係数の決定
+        let a = inv11*sxlon + inv12*szlon + inv13*slon;
+        let b = inv21*sxlon + inv22*szlon + inv23*slon;
+        let c = inv31*sxlon + inv32*szlon + inv33*slon;
+        let d = inv11*sxlat + inv12*szlat + inv13*slat;
+        let e = inv21*sxlat + inv22*szlat + inv23*slat;
+        let f = inv31*sxlat + inv32*szlat + inv33*slat;
 
         return { a, b, c, d, e, f };
     }
