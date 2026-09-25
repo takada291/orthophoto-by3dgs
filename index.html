@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>簡易正射v0.2</title>
+    <title>簡易正射v0.3</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -55,7 +55,7 @@
         #pane-3d { width: 50%; height: 100%; position: relative; border-right: 2px solid #ccc; }
         #canvas-container { width: 100%; height: 100%; display: block; }
         
-        /* 3Dビュー用の操作パネル（新規追加） */
+        /* 3Dビュー用の操作パネル */
         #view-controls {
             position: absolute;
             top: 10px;
@@ -66,14 +66,19 @@
             box-shadow: 0 0 5px rgba(0,0,0,0.3);
             z-index: 1000;
             display: flex;
+            flex-direction: column;
             gap: 6px;
         }
+        .control-row { display: flex; gap: 6px; }
         #view-controls button {
             background-color: #7f8c8d;
             font-size: 11px;
             padding: 4px 8px;
+            flex-grow: 1;
         }
         #view-controls button:hover { background-color: #95a5a6; }
+        .btn-highlight { background-color: #2ecc71 !important; color: white; }
+        .btn-highlight:hover { background-color: #27ae60 !important; }
         
         #pane-map { width: 50%; height: 100%; position: relative; }
 
@@ -166,7 +171,7 @@
 <body>
 
 <div id="header-controls">
-    <div class="app-title">簡易正射アプリ（3DGSから簡易オルソ作成）v0.2</div>
+    <div class="app-title">簡易正射アプリ（3DGSから簡易オルソ作成）v0.3</div>
     
     <select id="prefSelect" onchange="changePref()">
         <option value="43.064,141.347">北海道</option>
@@ -229,11 +234,17 @@
 
 <div id="main-container">
     <div id="pane-3d">
-        <!-- モデル操作パネル -->
+        <!-- 拡張されたモデル操作パネル -->
         <div id="view-controls">
-            <button onclick="resetCameraTop()">俯瞰(真上)</button>
-            <button onclick="rotateModel(-15)">↺ 左回転</button>
-            <button onclick="rotateModel(15)">右回転 ↻</button>
+            <button class="btn-highlight" onclick="resetCameraTop()">俯瞰(真上から見る)</button>
+            <div class="control-row">
+                <button onclick="rotateModelX(90)">↷ 前に倒す(90度)</button>
+                <button onclick="rotateModelX(-90)">↶ 奥に倒す(90度)</button>
+            </div>
+            <div class="control-row">
+                <button onclick="rotateModel(-15)">↺ 左回転(15度)</button>
+                <button onclick="rotateModel(15)">右回転(15度) ↻</button>
+            </div>
         </div>
         
         <div class="crosshair-instruction">2.3DモデルをダブルクリックでGCPを追加</div>
@@ -325,7 +336,6 @@
     directionalLight.position.set(10, 10, 5);
     scene.add(directionalLight);
 
-    // ★重要: モデルとGCPをまとめるグループを作成
     const modelGroup = new THREE.Group();
     scene.add(modelGroup);
 
@@ -345,28 +355,23 @@
     function setupModel(model) {
         if (currentModel) modelGroup.remove(currentModel);
         
-        // GCPの初期化
         gcps.forEach(g => modelGroup.remove(g.mesh));
         gcps = [];
         gcpCounter = 1;
         selectedGcpId = null;
         renderGcpTable();
         
-        // モデルの初期化とグループ追加
-        modelGroup.rotation.set(0, 0, 0); // 回転リセット
+        modelGroup.rotation.set(0, 0, 0); 
         currentModel = model;
         modelGroup.add(currentModel);
         
-        // モデルの中心をグループの原点に合わせる
         modelBox.setFromObject(currentModel);
         const center = modelBox.getCenter(new THREE.Vector3());
         currentModel.position.sub(center);
         
-        // カメラリセット
         window.resetCameraTop();
     }
 
-    // ★UI追加機能：俯瞰カメラへのリセット
     window.resetCameraTop = function() {
         if (!currentModel) return;
         modelBox.setFromObject(modelGroup);
@@ -374,18 +379,24 @@
         const size = modelBox.getSize(new THREE.Vector3());
         const maxDim = Math.max(size.x, size.y, size.z);
         
-        // 真上（ややZ方向にズラしてジンバルロック回避）から見下ろす
         camera.position.set(center.x, center.y + maxDim * 1.2, center.z + 0.01);
         controls.target.copy(center);
         controls.update();
     };
 
-    // ★UI追加機能：モデルグループ全体の回転
+    // Y軸回転（東西南北の向き調整）
     window.rotateModel = function(deg) {
         if (!currentModel) return;
         const rad = deg * (Math.PI / 180);
         modelGroup.rotation.y += rad;
-        // 回転後、ワールド座標ベースのアフィン変換に影響はないがUI更新のため実行
+        renderGcpTable(); 
+    };
+
+    // ★新規追加: X軸回転（モデルが立ち上がっている場合に寝かせる）
+    window.rotateModelX = function(deg) {
+        if (!currentModel) return;
+        const rad = deg * (Math.PI / 180);
+        modelGroup.rotation.x += rad;
         renderGcpTable(); 
     };
 
@@ -405,11 +416,9 @@
         mouse.y = -((e.clientY - rect.top) / container.clientHeight) * 2 + 1;
 
         raycaster.setFromCamera(mouse, camera);
-        // グループ全体に対して当たり判定を行う
         const intersects = raycaster.intersectObject(modelGroup, true);
 
         if (intersects.length > 0) {
-            // intersects[0].pointは「ワールド座標」。グループ内のローカル座標に変換して格納
             const localPoint = modelGroup.worldToLocal(intersects[0].point.clone());
             addGcpPoint(localPoint);
         }
@@ -422,7 +431,7 @@
         const sphere = new THREE.Mesh(geometry, material);
         
         sphere.position.copy(localPoint);
-        modelGroup.add(sphere); // GCPも一緒に回転するようにグループに追加
+        modelGroup.add(sphere); 
 
         const gcp = { id: gcpCounter++, mesh: sphere, lat: "", lon: "" };
         gcps.push(gcp);
@@ -512,7 +521,7 @@
     });
 
     // ==========================================
-    // アフィン変換・エクスポート処理 (真北補正付き・ワールド座標基準)
+    // アフィン変換・エクスポート処理
     // ==========================================
     function calculateAffineTransform() {
         const validGcps = gcps.filter(g => g.lat !== "" && g.lon !== "");
@@ -523,7 +532,6 @@
 
         const [p1, p2, p3] = validGcps;
         
-        // ★重要: モデルが回転しているため、現在のワールド座標を取得して計算する
         const wp1 = new THREE.Vector3(); p1.mesh.getWorldPosition(wp1);
         const wp2 = new THREE.Vector3(); p2.mesh.getWorldPosition(wp2);
         const wp3 = new THREE.Vector3(); p3.mesh.getWorldPosition(wp3);
@@ -551,7 +559,7 @@
         const northVec = new THREE.Vector3(northX, 0, northZ).normalize();
         orthoCamera.up.copy(northVec);
 
-        modelBox.setFromObject(modelGroup); // モデルグループ全体のバウンディングボックスを取得
+        modelBox.setFromObject(modelGroup);
         const center = modelBox.getCenter(new THREE.Vector3());
         
         orthoCamera.position.set(center.x, modelBox.max.y + 10, center.z);
